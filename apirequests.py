@@ -77,18 +77,19 @@ class DataFetcher:
 
     def get_playoff_games(self):
         if self.season == 2024:
+            return []
             yesterday = date.today() - timedelta(days=1)
             yesterday.strftime("%y-%m-%d")
             schedule = mlb.get_schedule(
                 start_date=f"{self.season}-01-01",
                 end_date=yesterday,
-                gameTypes="P",
+                gameTypes=["F", "D", "L", "W"],
             )
         else:
             schedule = mlb.get_schedule(
                 start_date=f"{self.season}-01-01",
                 end_date=f"{self.season}-12-31",
-                gameTypes="P",
+                gameTypes=["F", "D", "L", "W"],
             )
         games = []
         for day in schedule.dates:
@@ -182,6 +183,7 @@ class DataFetcher:
         pitcher_stats = []
         batter_stats = []
         fielder_stats = []
+        games = []
 
         game_ids = self.get_regular_season_games()
         playoff_ids = self.get_playoff_games()
@@ -195,9 +197,24 @@ class DataFetcher:
             if not self.use_existing or not self.data_exists(game):
 
                 box_score = mlb.get_game_box_score(game)
+
                 if self.is_game_final(box_score):
+
                     home_team = box_score.teams.home
                     away_team = box_score.teams.away
+
+                    games.append(
+                        {
+                            "game_id": game,
+                            "home_team": home_team.team.name,
+                            "home_score": home_team.teamstats["batting"]["runs"],
+                            "home_id": home_team.team.id,
+                            "away_team": away_team.team.name,
+                            "away_score": away_team.teamstats["batting"]["runs"],
+                            "away_id": away_team.team.id,
+                            "date": date,
+                        }
+                    )
 
                     home_win = (
                         home_team.teamstats["batting"]["runs"]
@@ -232,6 +249,8 @@ class DataFetcher:
             else:
                 print("skipped")
 
+        games_df = pd.DataFrame(games)
+
         team_df, pitching_df, batter_df, fielding_df = self.concatenate_existing_data(
             team_stats, pitcher_stats, batter_stats, fielder_stats
         )
@@ -246,11 +265,13 @@ class DataFetcher:
             by=["name", "date"]
         )
 
-        return team_df, pitching_df, batter_df, fielding_df
+        return games_df, team_df, pitching_df, batter_df, fielding_df
 
     def fetch_and_save_data(self):
         self.find_existing_data()
-        tdf, pdf, bdf, fdf = self.fetch_stats()
+        gdf, tdf, pdf, bdf, fdf = self.fetch_stats()
+        gdf.to_csv(f"{self.season}_games.csv", index=False)
+        print("saved game data")
         tdf.to_csv(f"{self.season}_team_stats.csv", index=False)
         print("saved team data")
         pdf.to_csv(f"{self.season}_pitching_stats.csv", index=False)
@@ -263,4 +284,4 @@ class DataFetcher:
 
 seasons = [2022, 2023, 2024]
 for season in seasons:
-    DataFetcher(season, use_existing=True)
+    DataFetcher(season, use_existing=False)
