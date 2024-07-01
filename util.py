@@ -17,7 +17,7 @@ def add_identifying_fields_to_dict(
     dict["date"] = date
     dict["name"] = fullname
     dict["position"] = position
-    dict["game_id"] = (game_id,)
+    dict["game_id"] = game_id
     dict["team_id"] = team_id
     dict["battingorder"] = battingorder
 

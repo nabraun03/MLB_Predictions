@@ -3,6 +3,7 @@ import pandas as pd
 import json
 from datetime import date, timedelta
 import mlbstatsapi
+import argparse
 from util import (
     merge_team_stats,
     add_identifying_fields_to_dict,
@@ -26,6 +27,7 @@ class DataFetcher:
 
     def __init__(self, season, use_existing=True):
         self.season = season
+        self.existing_games = pd.DataFrame()
         self.existing_team_stats = pd.DataFrame()
         self.existing_pitching_stats = pd.DataFrame()
         self.existing_fielding_stats = pd.DataFrame()
@@ -35,6 +37,7 @@ class DataFetcher:
 
     def find_existing_data(self):
         try:
+            self.existing_games = pd.read_csv(f"{self.season}_games.csv")
             self.existing_team_stats = pd.read_csv(f"{self.season}_team_stats.csv")
             self.existing_fielding_stats = pd.read_csv(
                 f"{self.season}_fielding_stats.csv"
@@ -98,7 +101,7 @@ class DataFetcher:
         return games
 
     def concatenate_existing_data(
-        self, team_stats, pitcher_stats, batter_stats, fielder_stats
+        self, team_stats, pitcher_stats, batter_stats, fielder_stats, games
     ):
         if (
             self.use_existing
@@ -106,7 +109,7 @@ class DataFetcher:
             and len(team_stats) != 0
         ):
             team_df = pd.concat(
-                [self.existing_team_stats, pd.concat(team_stats, ignore_index=True)],
+                [self.existing_team_stats, pd.DataFrame(team_stats)],
                 ignore_index=True,
             )
         elif len(team_stats) == 0:
@@ -120,10 +123,7 @@ class DataFetcher:
             and len(pitcher_stats) != 0
         ):
             pitcher_df = pd.concat(
-                [
-                    self.existing_pitching_stats,
-                    pd.concat(pitcher_stats, ignore_index=True),
-                ],
+                [self.existing_pitching_stats, pd.DataFrame(pitcher_stats)],
                 ignore_index=True,
             )
         elif len(pitcher_stats) == 0:
@@ -139,7 +139,7 @@ class DataFetcher:
             batter_df = pd.concat(
                 [
                     self.existing_batting_stats,
-                    pd.concat(batter_stats, ignore_index=True),
+                    pd.DataFrame(batter_stats),
                 ],
                 ignore_index=True,
             )
@@ -156,7 +156,7 @@ class DataFetcher:
             fielder_df = pd.concat(
                 [
                     self.existing_fielding_stats,
-                    pd.concat(fielder_stats, ignore_index=True),
+                    pd.DataFrame(fielder_stats),
                 ],
                 ignore_index=True,
             )
@@ -165,7 +165,20 @@ class DataFetcher:
         else:
             fielder_df = pd.DataFrame(fielder_stats)
 
-        return team_df, pitcher_df, batter_df, fielder_df
+        if self.use_existing and not self.existing_games.empty and len(games) != 0:
+            games_df = pd.concat(
+                [
+                    self.existing_games,
+                    pd.DataFrame(games),
+                ],
+                ignore_index=True,
+            )
+        elif len(games) == 0:
+            games_df = self.existing_games
+        else:
+            games_df = pd.DataFrame(games)
+
+        return team_df, pitcher_df, batter_df, fielder_df, games_df
 
     def is_game_final(self, box_score):
         if (
@@ -249,10 +262,10 @@ class DataFetcher:
             else:
                 print("skipped")
 
-        games_df = pd.DataFrame(games)
-
-        team_df, pitching_df, batter_df, fielding_df = self.concatenate_existing_data(
-            team_stats, pitcher_stats, batter_stats, fielder_stats
+        team_df, pitching_df, batter_df, fielding_df, games_df = (
+            self.concatenate_existing_data(
+                team_stats, pitcher_stats, batter_stats, fielder_stats, games
+            )
         )
 
         team_df = team_df.sort_values(by=["date"])
@@ -282,6 +295,20 @@ class DataFetcher:
         print("saved fielding data")
 
 
-seasons = [2022, 2023, 2024]
-for season in seasons:
-    DataFetcher(season, use_existing=False)
+if __name__ == "__main__":
+
+    parser = argparse.ArgumentParser(prog="apirequests")
+
+    parser.add_argument(
+        "-n",
+        "--new",
+        help="Fetches data from online, creates current profiles, and generates predictions",
+        action="store_true",
+        default=False,
+    )
+
+    args = parser.parse_known_args()[0]
+
+    seasons = [2022, 2023, 2024]
+    for season in seasons:
+        DataFetcher(season, use_existing=not args.new)

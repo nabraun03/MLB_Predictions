@@ -281,10 +281,17 @@ class Preprocessor:
         )
         print("Generating batting data")
         self.batting_data = self.generate_batting_averages(merged_batting_stats)
+        self.batting_data = self.batting_data.drop_duplicates(["player_id", "game_id"])
         print("Generating pitching data")
         self.pitching_data = self.generate_pitching_averages(merged_pitching_stats)
+        self.pitching_data = self.pitching_data.drop_duplicates(
+            ["player_id", "game_id"]
+        )
         print("Generating fielding data")
         self.fielding_data = self.generate_fielding_averages(merged_fielding_stats)
+        self.fielding_data = self.fielding_data.drop_duplicates(
+            ["player_id", "game_id"]
+        )
 
     def generate_pitching_averages(self, data):
         modified_groups = []
@@ -381,7 +388,7 @@ class Preprocessor:
 
         # Drop the original averaging columns
         group = group.drop(columns=averaging_columns)
-        group.drop(
+        group = group.drop(
             columns=[
                 "stolenbasepercentage",
                 "strikepercentage",
@@ -435,7 +442,7 @@ class Preprocessor:
 
         # Drop the original averaging columns
         group = group.drop(columns=averaging_columns)
-        group.drop(columns=["stolenbasepercentage"])
+        group = group.drop(columns=["stolenbasepercentage"])
         return group
 
     def running_batting_averages(self, group):
@@ -489,7 +496,9 @@ class Preprocessor:
 
         # Drop the original averaging columns
         group = group.drop(columns=averaging_columns)
-        group.drop(columns=["stolenbasepercentage", "summary", "note"])
+        group = group.drop(
+            columns=["stolenbasepercentage", "summary", "note", "atbatsperhomerun"]
+        )
         return group
 
     def generate_all_rosters(self):
@@ -521,12 +530,67 @@ class Preprocessor:
             (self.batting_data["game_id"] == game_id)
             & (self.batting_data["team_id"] == team)
             & (self.batting_data["battingorder"] != None)
+            & (self.batting_data["battingorder"] % 100 == 0)
         ]
         fielders = self.fielding_data[
-            (self.fielding_data["game_id"] == game_id) & (self.fielding_data["team_id"])
+            (self.fielding_data["game_id"] == game_id)
+            & (self.fielding_data["team_id"] == team)
         ]
 
         profile = {"game_id": game_id, "team_id": team, "date": date}
+
+        if len(pitchers) != 1:
+            print(pitchers)
+            assert len(pitchers) == 1
+        if len(batters) != 9:
+            print(batters)
+            all_batters = self.batting_data[
+                (self.batting_data["game_id"] == game_id)
+                & (self.batting_data["team_id"] == team)
+                & (self.batting_data["battingorder"] != None)
+            ].sort_values(by=["battingorder"])
+
+            # Separate starters and pinch hitters
+            starters = all_batters[all_batters["battingorder"] % 100 == 0].copy()
+            pinch_hitters = all_batters[all_batters["battingorder"] % 100 == 1].copy()
+
+            # Create a dictionary to keep track of batting order positions
+            batting_order = {i: None for i in range(100, 1000, 100)}
+
+            # Fill the batting order with starters first
+            for _, batter in starters.iterrows():
+                batting_order[batter["battingorder"]] = batter
+
+            # Fill in pinch hitters where there are no starters
+            for _, batter in pinch_hitters.iterrows():
+                order = batter["battingorder"] - 1
+                if batting_order[order] is None:
+                    batting_order[order] = batter
+
+                    # Identify missing spots and fill with the batter with the most at-bats
+            missing_spots = [
+                order for order, batter in batting_order.items() if batter is None
+            ]
+            all_batters_sorted = batters.sort_values(by="atbats", ascending=False)
+
+            batters_included = batting_order.values()
+
+            for order in missing_spots:
+                for _, batter in all_batters_sorted.iterrows():
+                    if batter["player_id"] not in [batters_included]:
+                        batting_order[order] = batter
+                        break
+
+            # Collect the final list of all_batters
+            batters = pd.DataFrame(
+                [batter for batter in batting_order.values() if batter is not None]
+            )
+            if len(batters) != 9:
+                print(all_batters["battingorder"])
+                assert len(batters) == 9
+        if len(fielders) != 9:
+            print(fielders)
+            assert len(fielders) == 9
 
         # Add pitcher stats to profile
         for index, row in pitchers.iterrows():
@@ -566,7 +630,6 @@ class Preprocessor:
                 if stat not in nonstat_columns:
                     profile_key = f"fielder_{row['position']}_{stat}"
                     profile[profile_key] = row[stat]
-
         return profile
 
     def save_data(self):
