@@ -17,19 +17,20 @@ warnings.filterwarnings("ignore", category=PerformanceWarning, module="pandas")
 
 class Preprocessor:
 
-    def __init__(self, seasons, span, shift):
+    def __init__(self, seasons, span, shift, full):
 
         self.seasons = seasons
         self.span = span
         self.shift = shift
+        self.full = full
         self.games = self.load_games()
         self.team_data = self.load_team_data()
         self.load_player_data()
-        self.generate_all_rosters()
-        # Combine player data for each year
-        # Calculate running averages
-        # Generate rosters
-        self.save_data()
+
+        if self.full:
+            self.generate_all_rosters()
+
+            self.save_data()
 
     def load_games(self):
         seasons = []
@@ -543,7 +544,6 @@ class Preprocessor:
             print(pitchers)
             assert len(pitchers) == 1
         if len(batters) != 9:
-            print(batters)
             all_batters = self.batting_data[
                 (self.batting_data["game_id"] == game_id)
                 & (self.batting_data["team_id"] == team)
@@ -633,11 +633,18 @@ class Preprocessor:
         return profile
 
     def save_data(self):
+        print("Saving games")
+        self.games.to_csv("games.csv")
+        print("Saving team data")
         self.team_data.to_csv("team_data.csv")
+        print("Saving player data")
         self.pitching_data.to_csv("pitching_data.csv")
         self.fielding_data.to_csv("fielding_data.csv")
         self.batting_data.to_csv("batting_data.csv")
+
+        print("Saving rosters")
         self.rosters.to_csv("rosters.csv")
+        print("Saving complete profiles")
         self.complete_profiles = pd.merge(
             self.team_data, self.rosters, on=["game_id", "team_id"], how="inner"
         )
