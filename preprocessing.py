@@ -25,6 +25,9 @@ class Preprocessor:
         self.full = full
         self.games = self.load_games()
         self.team_data = self.load_team_data()
+        if self.full:
+            self.team_data.to_csv("team_data.csv")
+            del self.team_data
         self.load_player_data()
 
         if self.full:
@@ -41,7 +44,7 @@ class Preprocessor:
     def load_team_data(self):
         modified_groups = []
         for season in self.seasons:
-            team_df = pd.read_csv(f"{season}_team_stats.csv")
+            team_df = pd.read_csv(f"{season}_team_stats.csv").fillna(0)
             # Calculate statistics for each season
             ## Game count, time between games, running averages, winning percentages, streaks
             grouped = team_df.groupby("teamCode")
@@ -65,12 +68,12 @@ class Preprocessor:
                 modified_groups.append(group)
 
         # Concatenate team data
-        return pd.concat(modified_groups)
+        return pd.concat(modified_groups).fillna(0)
 
     def generate_winning_percentages(self, group):
         # Calculate overall winning percentage
         for span_factor in [1, 2, 10]:
-            col_name = f"winning_percentage_last_{self.span/span_factor}"
+            col_name = f"winning_percentage_last_{int(self.span/span_factor)}"
             group[col_name] = (
                 group["win"]
                 .rolling(window=int(self.span / span_factor), min_periods=1)
@@ -117,6 +120,7 @@ class Preprocessor:
             return group
 
     def generate_team_running_averages(self, group):
+        group = group.replace("-.--", 0)
         for span_factor in [1, 2, 10]:
             averaging_columns = [
                 col
@@ -147,19 +151,21 @@ class Preprocessor:
                     "pitching_groundoutstoairouts",
                     "pitching_strikepercentage",
                 ]
+                and "running" not in col
+                and "rolling" not in col
             ]
             for col in averaging_columns:
-
-                running_avg_col_name = f"running_avg_{col}_last_{self.span/span_factor}"
+                running_avg_col_name = (
+                    f"running_avg_{col}_last_{int(self.span/span_factor)}"
+                )
                 group[running_avg_col_name] = (
                     group[col]
-                    .ewm(span=self.span / span_factor, min_periods=1)
+                    .ewm(span=int(self.span / span_factor), min_periods=1)
                     .mean()
                     .shift(self.shift)
                 )
-            print(self.span / span_factor)
             group = reconstruct_lost_team_stats(
-                group, self.span / span_factor, self.shift
+                group, int(self.span / span_factor), self.shift
             )
         group = group.drop(columns=averaging_columns)
 
@@ -273,9 +279,15 @@ class Preprocessor:
             pitching_data.append(pd.read_csv(f"{season}_pitching_stats.csv"))
             fielding_data.append(pd.read_csv(f"{season}_fielding_stats.csv"))
             batting_data.append(pd.read_csv(f"{season}_batting_stats.csv"))
-        merged_pitching_stats = pd.concat(pitching_data).sort_values(by=["date"])
-        merged_fielding_stats = pd.concat(fielding_data).sort_values(by=["date"])
-        merged_batting_stats = pd.concat(batting_data).sort_values(by=["date"])
+        merged_pitching_stats = (
+            pd.concat(pitching_data).sort_values(by=["date"]).fillna(0)
+        )
+        merged_fielding_stats = (
+            pd.concat(fielding_data).sort_values(by=["date"]).fillna(0)
+        )
+        merged_batting_stats = (
+            pd.concat(batting_data).sort_values(by=["date"]).fillna(0)
+        )
 
         merged_pitching_stats["inningspitched"] = convert_innings_pitched(
             merged_pitching_stats["inningspitched"]
@@ -356,6 +368,8 @@ class Preprocessor:
                 "position",
                 "battingorder",
             ]
+            and "running" not in col
+            and "rolling" not in col
         ]
 
         new_columns = {}
@@ -380,6 +394,7 @@ class Preprocessor:
             group = reconstruct_lost_pitching_stats(
                 group, int(self.span / span_factor), self.shift
             )
+            group[f"rolling_atbats_{int(self.span / span_factor)}"] = at_bats
 
         # Create a new DataFrame from the container
         new_columns_df = pd.DataFrame(new_columns, index=group.index)
@@ -397,6 +412,9 @@ class Preprocessor:
                 "homerunsper9",
                 "summary",
                 "note",
+                "position",
+                "battingorder",
+                "atbats",
             ]
         )
 
@@ -417,6 +435,8 @@ class Preprocessor:
                 "stolenbasepercentage",
                 "battingorder",
             ]
+            and "running" not in col
+            and "rolling" not in col
         ]
 
         new_columns = {}
@@ -465,6 +485,8 @@ class Preprocessor:
                 "atbats",
                 "battingorder",
             ]
+            and "running" not in col
+            and "rolling" not in col
         ]
 
         new_columns = {}
@@ -488,6 +510,7 @@ class Preprocessor:
             group = reconstruct_lost_batting_stats(
                 group, int(self.span / span_factor), self.shift
             )
+            group[f"rolling_atbats_{int(self.span / span_factor)}"] = at_bats
 
         # Create a new DataFrame from the container
         new_columns_df = pd.DataFrame(new_columns, index=group.index)
@@ -498,7 +521,13 @@ class Preprocessor:
         # Drop the original averaging columns
         group = group.drop(columns=averaging_columns)
         group = group.drop(
-            columns=["stolenbasepercentage", "summary", "note", "atbatsperhomerun"]
+            columns=[
+                "stolenbasepercentage",
+                "summary",
+                "note",
+                "atbatsperhomerun",
+                "atbats",
+            ]
         )
         return group
 
@@ -518,9 +547,21 @@ class Preprocessor:
             away_roster = self.generate_roster(away_team, game_id, date)
             profiles.append(home_roster)
             profiles.append(away_roster)
+        print("Concatenating rosters")
+
+        self.rosters = pd.DataFrame()
+        chunk = []
+        for i in range(len(profiles)):
+            if (i + 1) % 1000 == 0 or i == len(profiles) - 1:
+                self.rosters = pd.concat([self.rosters, pd.DataFrame(chunk)])
+                chunk = []
+
+            chunk.append(profiles[i])
+
         self.rosters = pd.DataFrame(profiles).sort_values(by=["date"])
 
     def generate_roster(self, team, game_id, date):
+
         pitchers = self.pitching_data[
             (self.pitching_data["game_id"] == game_id)
             & (self.pitching_data["team_id"] == team)
@@ -571,7 +612,9 @@ class Preprocessor:
             missing_spots = [
                 order for order, batter in batting_order.items() if batter is None
             ]
-            all_batters_sorted = batters.sort_values(by="atbats", ascending=False)
+            all_batters_sorted = batters.sort_values(
+                by="rolling_atbats_50", ascending=False
+            )
 
             batters_included = batting_order.values()
 
@@ -635,8 +678,7 @@ class Preprocessor:
     def save_data(self):
         print("Saving games")
         self.games.to_csv("games.csv")
-        print("Saving team data")
-        self.team_data.to_csv("team_data.csv")
+
         print("Saving player data")
         self.pitching_data.to_csv("pitching_data.csv")
         self.fielding_data.to_csv("fielding_data.csv")
@@ -645,11 +687,14 @@ class Preprocessor:
         print("Saving rosters")
         self.rosters.to_csv("rosters.csv")
         print("Saving complete profiles")
+
+        self.team_data = pd.read_csv("team_data.csv")
+
         self.complete_profiles = pd.merge(
-            self.team_data, self.rosters, on=["game_id", "team_id"], how="inner"
+            self.team_data, self.rosters, on=["game_id", "team_id", "date"], how="inner"
         )
         self.complete_profiles.to_csv("complete_profiles.csv")
 
 
 if __name__ == "__main__":
-    Preprocessor([2022, 2023, 2024], 50, 1)
+    Preprocessor([2024], 50, 1, True)

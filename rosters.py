@@ -50,7 +50,7 @@ def add_pitcher_fields_to_dict(m_dict, pitchers):
     m_dict["home_pitcher_id"] = int(
         home_pitcher.select("a.starting-lineups__pitcher--link")[0]
         .get("href")
-        .split("-")[2]
+        .split("-")[-1]
     )
 
 
@@ -86,7 +86,6 @@ def generate_matchup_dicts(matchups):
 
     for matchup in matchups:
         matchup_dict = {}
-        # print(matchup)
 
         home_team = matchup.select("span.starting-lineups__team-name--home")
         away_team = matchup.select("span.starting-lineups__team-name--away")

@@ -5,6 +5,7 @@ from datetime import date, timedelta
 import mlbstatsapi
 import argparse
 from util import (
+    get_american_teams,
     merge_team_stats,
     add_identifying_fields_to_dict,
     add_player_stats,
@@ -58,6 +59,7 @@ class DataFetcher:
         )
 
     def get_regular_season_games(self):
+        american_teams = get_american_teams()
         if self.season == 2024:
             yesterday = date.today() - timedelta(days=1)
             yesterday.strftime("%y-%m-%d")
@@ -75,10 +77,17 @@ class DataFetcher:
         games = []
         for day in schedule.dates:
             for game in day.games:
-                games.append((game.gamepk, day.date))
+                if game.status.detailedstate != "Postponed" and (
+                    (self.season >= 2022)
+                    or (
+                        self.season < 2022 and game.teams.home.team.id in american_teams
+                    )
+                ):
+                    games.append((game.gamepk, day.date))
         return games
 
     def get_playoff_games(self):
+        american_teams = get_american_teams()
         if self.season == 2024:
             return []
             yesterday = date.today() - timedelta(days=1)
@@ -97,7 +106,13 @@ class DataFetcher:
         games = []
         for day in schedule.dates:
             for game in day.games:
-                games.append((game.gamepk, day.date))
+                if game.status.detailedstate != "Postponed" and (
+                    (self.season >= 2022)
+                    or (
+                        self.season < 2022 and game.teams.home.team.id in american_teams
+                    )
+                ):
+                    games.append((game.gamepk, day.date))
         return games
 
     def concatenate_existing_data(
@@ -180,16 +195,6 @@ class DataFetcher:
 
         return team_df, pitcher_df, batter_df, fielder_df, games_df
 
-    def is_game_final(self, box_score):
-        if (
-            float(box_score.teams.home.teamstats["pitching"]["inningspitched"]) < 9.0
-            and float(box_score.teams.away.teamstats["pitching"]["inningspitched"])
-            < 9.0
-        ):
-            return False
-        else:
-            return True
-
     def fetch_stats(self):
 
         team_stats = []
@@ -201,64 +206,67 @@ class DataFetcher:
         game_ids = self.get_regular_season_games()
         playoff_ids = self.get_playoff_games()
         count = 0
+        done_games = set()
         for game, date in game_ids + playoff_ids:
             if count % 10 == 0:
                 print(f"{count} / {len(game_ids + playoff_ids)}")
 
+            if game in done_games:
+                print(game)
+                continue
+
             count += 1
+            if game == 661702:
+                print(game)
 
             if not self.use_existing or not self.data_exists(game):
-
+                done_games.add(game)
                 box_score = mlb.get_game_box_score(game)
 
-                if self.is_game_final(box_score):
+                home_team = box_score.teams.home
+                away_team = box_score.teams.away
 
-                    home_team = box_score.teams.home
-                    away_team = box_score.teams.away
+                games.append(
+                    {
+                        "game_id": game,
+                        "home_team": home_team.team.name,
+                        "home_score": home_team.teamstats["batting"]["runs"],
+                        "home_id": home_team.team.id,
+                        "away_team": away_team.team.name,
+                        "away_score": away_team.teamstats["batting"]["runs"],
+                        "away_id": away_team.team.id,
+                        "date": date,
+                    }
+                )
 
-                    games.append(
-                        {
-                            "game_id": game,
-                            "home_team": home_team.team.name,
-                            "home_score": home_team.teamstats["batting"]["runs"],
-                            "home_id": home_team.team.id,
-                            "away_team": away_team.team.name,
-                            "away_score": away_team.teamstats["batting"]["runs"],
-                            "away_id": away_team.team.id,
-                            "date": date,
-                        }
-                    )
+                home_win = (
+                    home_team.teamstats["batting"]["runs"]
+                    > away_team.teamstats["batting"]["runs"]
+                )
 
-                    home_win = (
-                        home_team.teamstats["batting"]["runs"]
-                        > away_team.teamstats["batting"]["runs"]
-                    )
+                team_stats.append(
+                    merge_team_stats(home_team, date, game, home_win, True)
+                )
+                team_stats.append(
+                    merge_team_stats(away_team, date, game, not home_win, False)
+                )
 
-                    team_stats.append(
-                        merge_team_stats(home_team, date, game, home_win, True)
-                    )
-                    team_stats.append(
-                        merge_team_stats(away_team, date, game, not home_win, False)
-                    )
-
-                    add_player_stats(
-                        home_team,
-                        date,
-                        pitcher_stats,
-                        batter_stats,
-                        fielder_stats,
-                        game,
-                    )
-                    add_player_stats(
-                        away_team,
-                        date,
-                        pitcher_stats,
-                        batter_stats,
-                        fielder_stats,
-                        game,
-                    )
-                else:
-                    print("POSTPONED GAME\n\n\n\n\n\n\n\n\n\n\n")
+                add_player_stats(
+                    home_team,
+                    date,
+                    pitcher_stats,
+                    batter_stats,
+                    fielder_stats,
+                    game,
+                )
+                add_player_stats(
+                    away_team,
+                    date,
+                    pitcher_stats,
+                    batter_stats,
+                    fielder_stats,
+                    game,
+                )
             else:
                 print("skipped")
 
@@ -309,6 +317,6 @@ if __name__ == "__main__":
 
     args = parser.parse_known_args()[0]
 
-    seasons = [2022, 2023, 2024]
+    seasons = [2022]
     for season in seasons:
         DataFetcher(season, use_existing=not args.new)

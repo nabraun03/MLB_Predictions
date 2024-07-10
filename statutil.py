@@ -105,6 +105,7 @@ def reconstruct_lost_team_stats(group, span, shift):
     group[f"rolling_pitching_strikepercentage_{span}"] = (
         rolling["pitching_strikes"] / rolling["pitching_pitchesthrown"]
     )
+
     return group
 
 
@@ -199,5 +200,4 @@ def reconstruct_lost_batting_stats(group, span, shift):
         rolling["stolenbases"] + rolling["caughtstealing"]
     )
     group[f"rolling_homerunsperatbat_{span}"] = rolling["homeruns"] / rolling["atbats"]
-
     return group
